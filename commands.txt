@@ -1,142 +1,50 @@
 ============================================================
-PAPER 1 - SOFTWARE DEFECT PREDICTION
-COMMANDS
+CSDL-SEN-XAI SOFTWARE DEFECT PREDICTION SYSTEM
+COMMANDS & USAGE GUIDE
 ============================================================
 
+Reference: "An Interpretable Analytical Intelligence Architecture Delivering Reliable Detection of Software Defect Instances"
+(IJACSA, Vol. 16, No. 12, 2025)
 
 ============================================================
-1. CREATE VIRTUAL ENVIRONMENT
-============================================================
-
-Windows:
-
-py -3.11 -m venv .venv
-
-
-============================================================
-2. ACTIVATE VIRTUAL ENVIRONMENT
-============================================================
-
-Windows:
-
-.venv\Scripts\activate
-
-
-============================================================
-3. UPGRADE PIP
-============================================================
-
-python -m pip install --upgrade pip
-
-
-============================================================
-4. INSTALL REQUIREMENTS
+1. INSTALL REQUIREMENTS
 ============================================================
 
 pip install -r requirements.txt
 
 
 ============================================================
-5. CHECK PYTORCH
+2. VERIFY CORE LIBRARIES & GPU / CPU STATUS
 ============================================================
 
-python -c "import torch; print('PyTorch:', torch.__version__); print('CUDA available:', torch.cuda.is_available())"
-
-
-============================================================
-6. CHECK STREAMLIT
-============================================================
-
-streamlit --version
+python -c "import torch, shap, captum, sklearn; print('PyTorch:', torch.__version__, '| SHAP & Captum OK')"
 
 
 ============================================================
-7. PROJECT STRUCTURE
-============================================================
-
-software-defect-prediction/
-│
-├── data/
-│   └── cm1.csv
-│
-├── models/
-│
-├── model.py
-├── preprocess.py
-├── train.py
-├── predict.py
-├── app.py
-├── requirements.txt
-└── commands.txt
-
-
-============================================================
-8. CHECK CM1 DATASET
+3. RUN PREPROCESSING & SMOTE VERIFICATION
 ============================================================
 
 python preprocess.py
 
 
 ============================================================
-9. TRAIN THE MODEL
+4. TRAIN FULL PIPELINE (EAO + CSDL + 10-FOLD CV + BASELINES)
 ============================================================
 
 python train.py
 
 
 ============================================================
-10. TEST THE TRAINED MODEL
+5. RUN INFERENCE & INTEGRATED GRADIENTS EXPLAINABILITY
 ============================================================
 
 python predict.py
 
 
 ============================================================
-11. START STREAMLIT DASHBOARD
+6. LAUNCH STREAMLIT INTERACTIVE DASHBOARD
 ============================================================
 
 streamlit run app.py
 
-
-============================================================
-12. OPEN DASHBOARD
-============================================================
-
-Open the URL shown by Streamlit.
-
-Usually:
-
-http://localhost:8501
-
-
-============================================================
-13. STOP STREAMLIT
-============================================================
-
-Press:
-
-CTRL + C
-
-
-============================================================
-14. RETRAIN THE MODEL
-============================================================
-
-Delete the generated files:
-
-models\defect_model.pth
-models\scaler.pkl
-models\features.pkl
-models\training_results.json
-models\training_history.json
-
-Then run:
-
-python train.py
-
-
-============================================================
-15. DEACTIVATE VIRTUAL ENVIRONMENT
-============================================================
-
-deactivate
+Access in browser at: http://localhost:8501

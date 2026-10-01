@@ -1,467 +1,147 @@
+"""
+Prediction and Inference Pipeline for CSDL-SEN-XAI
+Reference: Section III-F, III-G, Equations (9), (10), (11)
+
+Functionality:
+1. Loads trained CSDL-SNN weights, prototypes, and preprocessor.
+2. Accepts software metric inputs (dictionary, JSON, or CSV row).
+3. Computes embedding distance defect probability (Eq. 9).
+4. Generates instance-level Integrated Gradients attributions (Eq. 11).
+5. Provides developer-friendly actionable recommendations.
+"""
+
 import os
 import joblib
 import torch
+import numpy as np
+import pandas as pd
 
-from model import HybridDefectModel
-from preprocess import preprocess_new_input
-
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
-
-MODEL_PATH = os.path.join(
-    "models",
-    "defect_model.pth"
-)
-
-FEATURES_PATH = os.path.join(
-    "models",
-    "features.pkl"
-)
+from preprocess import load_preprocessor
+from model import SiameseTwinNetwork, CSDLClassifier
+from explainability import ExplainabilityEngine
 
 
-# ============================================================
-# DEVICE
-# ============================================================
-
-def get_device():
-
-    if torch.cuda.is_available():
-
-        return torch.device("cuda")
-
-    return torch.device("cpu")
-
-
-# ============================================================
-# LOAD TRAINED MODEL
-# ============================================================
-
-def load_model():
-
-    if not os.path.exists(
-        MODEL_PATH
+class DefectPredictor:
+    def __init__(
+        self,
+        model_weights_path="models/csdl_snn_weights.pt",
+        prototypes_path="models/csdl_prototypes.joblib",
+        preprocessor_path="models/preprocessor.joblib",
+        device=None,
     ):
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        
+        if not os.path.exists(prototypes_path):
+            raise FileNotFoundError("Trained prototypes not found. Please run 'python train.py' first.")
 
-        raise FileNotFoundError(
-            f"Trained model not found: {MODEL_PATH}\n"
-            "Please run train.py first."
+        self.scaler, self.feature_names = load_preprocessor(preprocessor_path)
+        proto_data = joblib.load(prototypes_path)
+        
+        self.clean_prototype = proto_data["clean_prototype"]
+        self.defect_prototype = proto_data["defect_prototype"]
+        self.feature_mask = proto_data["feature_mask"]
+        self.best_params = proto_data["best_params"]
+        self.active_features = proto_data["active_features"]
+        
+        # Reconstruct CSDL model
+        mask_bool = np.array(self.feature_mask, dtype=bool)
+        n_in = int(np.sum(mask_bool))
+        
+        self.twin_net = SiameseTwinNetwork(
+            in_features=n_in,
+            embedding_dim=self.best_params.get("embedding_dim", 64),
+            activation=self.best_params.get("activation", "relu"),
+        ).to(self.device)
+        
+        self.twin_net.load_state_dict(torch.load(model_weights_path, map_location=self.device))
+        self.twin_net.eval()
+
+        self.csdl_clf = CSDLClassifier(
+            feature_mask=self.feature_mask,
+            embedding_dim=self.best_params.get("embedding_dim", 64),
+            activation=self.best_params.get("activation", "relu"),
+            device=self.device,
         )
+        self.csdl_clf.model = self.twin_net
+        self.csdl_clf.clean_prototype = self.clean_prototype
+        self.csdl_clf.defect_prototype = self.defect_prototype
 
-    device = get_device()
+        self.xai_engine = ExplainabilityEngine(self.csdl_clf, self.feature_names)
 
-    checkpoint = torch.load(
-        MODEL_PATH,
-        map_location=device
-    )
+    def predict_instance(self, metrics_dict_or_array, run_xai=True):
+        """
+        Runs prediction and XAI for a single module instance.
+        """
+        if isinstance(metrics_dict_or_array, dict):
+            # Fill aligned array
+            x_raw = []
+            for col in self.feature_names:
+                val = metrics_dict_or_array.get(col, 0.0)
+                x_raw.append(float(val))
+            x_arr = np.array(x_raw).reshape(1, -1)
+        elif isinstance(metrics_dict_or_array, (list, np.ndarray)):
+            x_arr = np.array(metrics_dict_or_array, dtype=float).reshape(1, -1)
+        elif isinstance(metrics_dict_or_array, pd.DataFrame):
+            x_arr = metrics_dict_or_array[self.feature_names].values.astype(float)
+        else:
+            raise ValueError("Input must be a dict, list, numpy array, or DataFrame.")
 
-    num_features = checkpoint[
-        "num_features"
-    ]
+        # Normalize with fitted Min-Max scaler (Eq. 1)
+        x_norm = self.scaler.transform(x_arr)
+        
+        # Predict probability and class (Eq. 9)
+        probs = self.csdl_clf.predict_proba(x_norm)[0]
+        prob_defective = float(probs[1])
+        predicted_class = int(prob_defective >= 0.5)
+        label_str = "Defective" if predicted_class == 1 else "Non-Defective / Clean"
 
-    linknet_weight = checkpoint.get(
-        "linknet_weight",
-        0.5
-    )
+        result = {
+            "predicted_class": predicted_class,
+            "label": label_str,
+            "defect_probability": prob_defective,
+            "clean_probability": float(probs[0]),
+            "raw_metrics": {name: float(val) for name, val in zip(self.feature_names, x_arr.flatten())},
+            "normalized_metrics": {name: float(val) for name, val in zip(self.feature_names, x_norm.flatten())},
+        }
 
-    bilstm_weight = checkpoint.get(
-        "bilstm_weight",
-        0.5
-    )
+        if run_xai:
+            local_attributions = self.xai_engine.compute_integrated_gradients(x_norm[0])
+            recommendation = self.xai_engine.generate_developer_explanation(result, local_attributions)
+            result["integrated_gradients"] = local_attributions
+            result["developer_recommendation"] = recommendation
 
-    model = HybridDefectModel(
+        return result
 
-        num_features=num_features,
-
-        linknet_weight=linknet_weight,
-
-        bilstm_weight=bilstm_weight
-    )
-
-    model.load_state_dict(
-        checkpoint[
-            "model_state_dict"
-        ]
-    )
-
-    model.to(
-        device
-    )
-
-    model.eval()
-
-    return (
-        model,
-        device
-    )
-
-
-# ============================================================
-# PREDICT ONE SAMPLE
-# ============================================================
-
-def predict(input_data):
-
-    """
-    Predict whether a software instance is defective.
-
-    Parameters
-    ----------
-    input_data : dict or pandas.DataFrame
-
-        Software metric values.
-
-    Returns
-    -------
-    dict
-
-        Prediction and probability information.
-    """
-
-    # --------------------------------------------------------
-    # Load trained model
-    # --------------------------------------------------------
-
-    model, device = load_model()
-
-    # --------------------------------------------------------
-    # Preprocess input
-    # --------------------------------------------------------
-
-    processed_input = (
-        preprocess_new_input(
-            input_data
-        )
-    )
-
-    # --------------------------------------------------------
-    # Convert to PyTorch tensor
-    # --------------------------------------------------------
-
-    X = torch.tensor(
-        processed_input,
-        dtype=torch.float32
-    )
-
-    X = X.to(
-        device
-    )
-
-    # --------------------------------------------------------
-    # Generate prediction
-    # --------------------------------------------------------
-
-    with torch.no_grad():
-
-        outputs = model.predict(
-            X
-        )
-
-    # --------------------------------------------------------
-    # Final prediction
-    # --------------------------------------------------------
-
-    prediction = int(
-        outputs[
-            "prediction"
-        ]
-        .cpu()
-        .numpy()[0]
-    )
-
-    # --------------------------------------------------------
-    # Confidence
-    # --------------------------------------------------------
-
-    confidence = float(
-        outputs[
-            "confidence"
-        ]
-        .cpu()
-        .numpy()[0]
-    )
-
-    # --------------------------------------------------------
-    # Final fused probabilities
-    # --------------------------------------------------------
-
-    probabilities = (
-        outputs[
-            "probabilities"
-        ]
-        .cpu()
-        .numpy()[0]
-    )
-
-    # --------------------------------------------------------
-    # LinkNet probabilities
-    # --------------------------------------------------------
-
-    linknet_probabilities = (
-        outputs[
-            "linknet_probabilities"
-        ]
-        .cpu()
-        .numpy()[0]
-    )
-
-    # --------------------------------------------------------
-    # Bi-LSTM probabilities
-    # --------------------------------------------------------
-
-    bilstm_probabilities = (
-        outputs[
-            "bilstm_probabilities"
-        ]
-        .cpu()
-        .numpy()[0]
-    )
-
-    # --------------------------------------------------------
-    # Convert class number to label
-    # --------------------------------------------------------
-
-    if prediction == 1:
-
-        prediction_label = (
-            "Defective"
-        )
-
-    else:
-
-        prediction_label = (
-            "Non-Defective"
-        )
-
-    # --------------------------------------------------------
-    # Return results
-    # --------------------------------------------------------
-
-    return {
-
-        "prediction":
-            prediction,
-
-        "prediction_label":
-            prediction_label,
-
-        "confidence":
-            confidence,
-
-        "non_defective_probability":
-            float(
-                probabilities[0]
-            ),
-
-        "defective_probability":
-            float(
-                probabilities[1]
-            ),
-
-        "linknet_non_defective":
-            float(
-                linknet_probabilities[0]
-            ),
-
-        "linknet_defective":
-            float(
-                linknet_probabilities[1]
-            ),
-
-        "bilstm_non_defective":
-            float(
-                bilstm_probabilities[0]
-            ),
-
-        "bilstm_defective":
-            float(
-                bilstm_probabilities[1]
-            )
-    }
-
-
-# ============================================================
-# SIMPLE TEST
-# ============================================================
 
 if __name__ == "__main__":
-
-    print(
-        "=" * 60
-    )
-
-    print(
-        "SOFTWARE DEFECT PREDICTION TEST"
-    )
-
-    print(
-        "=" * 60
-    )
-
-    # --------------------------------------------------------
-    # Check model
-    # --------------------------------------------------------
-
-    if not os.path.exists(
-        MODEL_PATH
-    ):
-
-        print(
-            "\nERROR:"
-        )
-
-        print(
-            "Trained model does not exist."
-        )
-
-        print(
-            "\nRun:"
-        )
-
-        print(
-            "    python train.py"
-        )
-
-        print(
-            "\nfirst."
-        )
-
-        exit()
-
-    # --------------------------------------------------------
-    # Check feature file
-    # --------------------------------------------------------
-
-    if not os.path.exists(
-        FEATURES_PATH
-    ):
-
-        print(
-            "\nERROR:"
-        )
-
-        print(
-            "Feature configuration does not exist."
-        )
-
-        print(
-            "\nRun:"
-        )
-
-        print(
-            "    python train.py"
-        )
-
-        print(
-            "\nfirst."
-        )
-
-        exit()
-
-    # --------------------------------------------------------
-    # Load feature names
-    # --------------------------------------------------------
-
-    feature_columns = joblib.load(
-        FEATURES_PATH
-    )
-
-    print(
-        "\nNumber of features:",
-        len(feature_columns)
-    )
-
-    # --------------------------------------------------------
-    # Create example input
-    #
-    # This is only a test input.
-    # The actual Streamlit application
-    # will collect the values from the user.
-    # --------------------------------------------------------
-
-    example_input = {}
-
-    for feature in feature_columns:
-
-        example_input[
-            feature
-        ] = 0.0
-
-    # --------------------------------------------------------
-    # Run prediction
-    # --------------------------------------------------------
-
-    result = predict(
-        example_input
-    )
-
-    # --------------------------------------------------------
-    # Display final result
-    # --------------------------------------------------------
-
-    print(
-        "\nPrediction:",
-        result[
-            "prediction_label"
-        ]
-    )
-
-    print(
-        "Confidence:",
-        f"{result['confidence'] * 100:.2f}%"
-    )
-
-    # --------------------------------------------------------
-    # Final fusion
-    # --------------------------------------------------------
-
-    print(
-        "\nFinal Score-Level Fusion:"
-    )
-
-    print(
-        "Non-Defective:",
-        f"{result['non_defective_probability'] * 100:.2f}%"
-    )
-
-    print(
-        "Defective:",
-        f"{result['defective_probability'] * 100:.2f}%"
-    )
-
-    # --------------------------------------------------------
-    # LinkNet
-    # --------------------------------------------------------
-
-    print(
-        "\nImproved LinkNet:"
-    )
-
-    print(
-        "Non-Defective:",
-        f"{result['linknet_non_defective'] * 100:.2f}%"
-    )
-
-    print(
-        "Defective:",
-        f"{result['linknet_defective'] * 100:.2f}%"
-    )
-
-    # --------------------------------------------------------
-    # Bi-LSTM
-    # --------------------------------------------------------
-
-    print(
-        "\nBi-LSTM:"
-    )
-
-    print(
-        "Non-Defective:",
-        f"{result['bilstm_non_defective'] * 100:.2f}%"
-    )
-
-    print(
-        "Defective:",
-        f"{result['bilstm_defective'] * 100:.2f}%"
-    )
+    predictor = DefectPredictor()
+    
+    sample_defective = {
+        "loc": 46.0,
+        "v(g)": 15.0,
+        "ev(g)": 3.0,
+        "iv(g)": 1.0,
+        "n": 239.0,
+        "v": 1362.41,
+        "l": 0.04,
+        "d": 22.3,
+        "i": 61.1,
+        "e": 30377.95,
+        "b": 0.45,
+        "t": 1687.66,
+        "lOCode": 8.0,
+        "lOComment": 35.0,
+        "lOBlank": 22.0,
+        "locCodeAndComment": 0.0,
+        "uniq_Op": 15.0,
+        "uniq_Opnd": 37.0,
+        "total_Op": 129.0,
+        "total_Opnd": 110.0,
+        "branchCount": 29.0
+    }
+    
+    res = predictor.predict_instance(sample_defective)
+    print("=== CSDL-SEN-XAI Inference Result ===")
+    print(f"Prediction: {res['label']} (Defect Risk: {res['defect_probability']*100:.2f}%)")
+    print("\nDeveloper Explanation:")
+    print(res["developer_recommendation"])

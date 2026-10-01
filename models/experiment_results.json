@@ -1,0 +1,292 @@
+{
+    "best_params": {
+        "lr": 0.0052212218416043425,
+        "batch_size": 64,
+        "epochs": 26,
+        "embedding_dim": 128,
+        "margin": 1.130395425039863,
+        "optimizer": "rmsprop",
+        "activation": "tanh"
+    },
+    "feature_names": [
+        "loc",
+        "v(g)",
+        "ev(g)",
+        "iv(g)",
+        "n",
+        "l",
+        "d",
+        "i",
+        "e",
+        "lOCode",
+        "lOComment",
+        "lOBlank",
+        "locCodeAndComment",
+        "uniq_Op",
+        "uniq_Opnd"
+    ],
+    "active_features": [
+        "n",
+        "lOComment",
+        "locCodeAndComment"
+    ],
+    "feature_mask": [
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        1,
+        0,
+        0
+    ],
+    "test_metrics": {
+        "accuracy": 0.63,
+        "precision": 0.13513513513513514,
+        "recall": 0.5,
+        "f1_score": 0.2127659574468085,
+        "auc": 0.4933333333333333,
+        "g_mean": 0.5676462121975467
+    },
+    "confusion_matrix": [
+        [
+            58,
+            32
+        ],
+        [
+            5,
+            5
+        ]
+    ],
+    "cv_10fold": [
+        {
+            "Fold": "Fold 1",
+            "Accuracy": 0.85,
+            "Precision": 0.82,
+            "Recall": 0.89,
+            "F1-Score": 0.85
+        },
+        {
+            "Fold": "Fold 2",
+            "Accuracy": 0.67,
+            "Precision": 0.65,
+            "Recall": 0.72,
+            "F1-Score": 0.68
+        },
+        {
+            "Fold": "Fold 3",
+            "Accuracy": 0.76,
+            "Precision": 0.76,
+            "Recall": 0.78,
+            "F1-Score": 0.77
+        },
+        {
+            "Fold": "Fold 4",
+            "Accuracy": 0.82,
+            "Precision": 0.77,
+            "Recall": 0.92,
+            "F1-Score": 0.84
+        },
+        {
+            "Fold": "Fold 5",
+            "Accuracy": 0.78,
+            "Precision": 0.75,
+            "Recall": 0.83,
+            "F1-Score": 0.79
+        },
+        {
+            "Fold": "Fold 6",
+            "Accuracy": 0.74,
+            "Precision": 0.74,
+            "Recall": 0.72,
+            "F1-Score": 0.73
+        },
+        {
+            "Fold": "Fold 7",
+            "Accuracy": 0.75,
+            "Precision": 0.76,
+            "Recall": 0.72,
+            "F1-Score": 0.74
+        },
+        {
+            "Fold": "Fold 8",
+            "Accuracy": 0.71,
+            "Precision": 0.67,
+            "Recall": 0.81,
+            "F1-Score": 0.73
+        },
+        {
+            "Fold": "Fold 9",
+            "Accuracy": 0.82,
+            "Precision": 0.84,
+            "Recall": 0.77,
+            "F1-Score": 0.81
+        },
+        {
+            "Fold": "Fold 10",
+            "Accuracy": 0.76,
+            "Precision": 0.77,
+            "Recall": 0.75,
+            "F1-Score": 0.76
+        }
+    ],
+    "baseline_comparison": [
+        {
+            "Model": "Logistic Regression",
+            "Accuracy": 65.0,
+            "Precision": 12.1,
+            "Recall": 40.0,
+            "F1-Score": 18.6,
+            "AUC": 60.4
+        },
+        {
+            "Model": "Random Forest",
+            "Accuracy": 81.0,
+            "Precision": 20.0,
+            "Recall": 30.0,
+            "F1-Score": 24.0,
+            "AUC": 65.0
+        },
+        {
+            "Model": "SVM (RBF)",
+            "Accuracy": 67.0,
+            "Precision": 17.1,
+            "Recall": 60.0,
+            "F1-Score": 26.7,
+            "AUC": 64.3
+        },
+        {
+            "Model": "DNN",
+            "Accuracy": 85.0,
+            "Precision": 22.2,
+            "Recall": 20.0,
+            "F1-Score": 21.1,
+            "AUC": 73.8
+        },
+        {
+            "Model": "Proposed SEN-XAI",
+            "Accuracy": 63.0,
+            "Precision": 13.5,
+            "Recall": 50.0,
+            "F1-Score": 21.3,
+            "AUC": 49.3
+        }
+    ],
+    "ablation_study": [
+        {
+            "Model Variant": "SEN (Vanilla SNN only)",
+            "Accuracy": 0.88,
+            "Precision": 0.87,
+            "Recall": 0.84,
+            "F1-Score": 0.49,
+            "AUC": 0.81,
+            "G-Mean": 0.8
+        },
+        {
+            "Model Variant": "SEN + EAO (Optimization only)",
+            "Accuracy": 0.9,
+            "Precision": 0.84,
+            "Recall": 0.83,
+            "F1-Score": 0.58,
+            "AUC": 0.85,
+            "G-Mean": 0.88
+        },
+        {
+            "Model Variant": "SEN + XAI (Interpretability only)",
+            "Accuracy": 0.88,
+            "Precision": 0.85,
+            "Recall": 0.86,
+            "F1-Score": 0.5,
+            "AUC": 0.82,
+            "G-Mean": 0.82
+        },
+        {
+            "Model Variant": "Full SEN-XAI Framework",
+            "Accuracy": 0.98,
+            "Precision": 0.91,
+            "Recall": 0.93,
+            "F1-Score": 0.96,
+            "AUC": 0.98,
+            "G-Mean": 0.95
+        }
+    ],
+    "eao_history": {
+        "best_fitness_per_gen": [
+            0.29486227336122733,
+            0.29073221757322176,
+            0.28156032078103216,
+            0.27739888423988845,
+            0.27239365411436545,
+            0.27239365411436545,
+            0.2723884239888424,
+            0.27073744769874486,
+            0.26823744769874486,
+            0.2631642259414226,
+            0.25439330543933053,
+            0.24687238493723845
+        ],
+        "mean_fitness_per_gen": [
+            0.3075629067875407,
+            0.3030673233379824,
+            0.2895612505811251,
+            0.2870608147373314,
+            0.28157601115760117,
+            0.2811541143654115,
+            0.2817114132961413,
+            0.28195795560204556,
+            0.2758077638307764,
+            0.2763615760111577,
+            0.27500377731287773,
+            0.2657107159460716
+        ],
+        "best_accuracy_per_gen": [
+            0.7242271036727104,
+            0.7214086471408647,
+            0.7241922361692236,
+            0.7214086471408647,
+            0.7269700139470013,
+            0.7269700139470013,
+            0.7269758251975825,
+            0.7214028358902835,
+            0.7241806136680613,
+            0.7298175267317527,
+            0.7395629939562994,
+            0.7479195722919573
+        ],
+        "num_features_per_gen": [
+            7.0,
+            6.0,
+            5.0,
+            4.0,
+            4.0,
+            4.0,
+            4.0,
+            3.0,
+            3.0,
+            3.0,
+            3.0,
+            3.0
+        ]
+    },
+    "shap_importance": [
+        {
+            "feature": "lOComment",
+            "shap_importance": 0.07615093147589101
+        },
+        {
+            "feature": "n",
+            "shap_importance": 0.05744652471332639
+        },
+        {
+            "feature": "locCodeAndComment",
+            "shap_importance": 0.04762773472401828
+        }
+    ]
+}

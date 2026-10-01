@@ -1,436 +1,169 @@
+"""
+Contrastive Siamese Defect Learning (CSDL) & Siamese Neural Network (SNN) Model
+Reference: Sections III-E, III-F, Equations (5), (9), Table I, Table II
+
+Components:
+1. SiameseTwinNetwork: Twin subnetwork with shared weights producing discriminative embeddings.
+2. ContrastiveLoss: Margin-based contrastive loss minimizing distance for same-class pairs and maximizing for distinct-class pairs.
+3. DistanceClassifier: Maps learned embedding distances relative to class prototypes to binary defect predictions (Eq. 9).
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 
 
-# ============================================================
-# IMPROVED LINKNET BLOCK
-# ============================================================
+class SiameseTwinNetwork(nn.Module):
+    def __init__(self, in_features, embedding_dim=64, activation="relu", dropout_rate=0.15):
+        super(SiameseTwinNetwork, self).__init__()
+        
+        hidden_dim = max(128, embedding_dim * 2)
 
-class LinkNetBlock(nn.Module):
-    """
-    1D LinkNet-style feature extraction block for
-    tabular software metrics.
-
-    The original LinkNet concept uses encoder-decoder
-    connections. Here the same idea is adapted to a
-    one-dimensional feature sequence.
-    """
-
-    def __init__(
-        self,
-        in_channels,
-        out_channels
-    ):
-        super().__init__()
-
-        self.conv1 = nn.Conv1d(
-            in_channels,
-            out_channels,
-            kernel_size=3,
-            padding=1
-        )
-
-        self.bn1 = nn.BatchNorm1d(
-            out_channels
-        )
-
-        self.conv2 = nn.Conv1d(
-            out_channels,
-            out_channels,
-            kernel_size=3,
-            padding=1
-        )
-
-        self.bn2 = nn.BatchNorm1d(
-            out_channels
-        )
-
-        # Residual / link connection
-        if in_channels != out_channels:
-
-            self.shortcut = nn.Conv1d(
-                in_channels,
-                out_channels,
-                kernel_size=1
-            )
-
+        self.fc1 = nn.Linear(in_features, hidden_dim)
+        self.bn1 = nn.BatchNorm1d(hidden_dim)
+        
+        self.fc2 = nn.Linear(hidden_dim, embedding_dim)
+        self.bn2 = nn.BatchNorm1d(embedding_dim)
+        
+        self.dropout = nn.Dropout(dropout_rate)
+        
+        if str(activation).lower() == "tanh":
+            self.act = nn.Tanh()
         else:
-
-            self.shortcut = nn.Identity()
-
-    def forward(self, x):
-
-        identity = self.shortcut(x)
-
-        x = self.conv1(x)
-
-        x = self.bn1(x)
-
-        x = F.relu(x)
-
-        x = self.conv2(x)
-
-        x = self.bn2(x)
-
-        x = x + identity
-
-        x = F.relu(x)
-
-        return x
-
-
-# ============================================================
-# IMPROVED LINKNET
-# ============================================================
-
-class ImprovedLinkNet(nn.Module):
-    """
-    LinkNet-style neural network adapted for software
-    defect prediction from numerical software metrics.
-    """
-
-    def __init__(
-        self,
-        num_features,
-        hidden_channels=64,
-        num_classes=2
-    ):
-        super().__init__()
-
-        self.num_features = num_features
-
-        # Initial feature projection
-        self.input_layer = nn.Conv1d(
-            1,
-            hidden_channels,
-            kernel_size=3,
-            padding=1
-        )
-
-        self.input_bn = nn.BatchNorm1d(
-            hidden_channels
-        )
-
-        # Encoder blocks
-        self.encoder1 = LinkNetBlock(
-            hidden_channels,
-            hidden_channels
-        )
-
-        self.encoder2 = LinkNetBlock(
-            hidden_channels,
-            hidden_channels * 2
-        )
-
-        # Decoder blocks
-        self.decoder1 = LinkNetBlock(
-            hidden_channels * 2,
-            hidden_channels
-        )
-
-        self.decoder2 = LinkNetBlock(
-            hidden_channels,
-            hidden_channels
-        )
-
-        # Global feature representation
-        self.pool = nn.AdaptiveAvgPool1d(
-            1
-        )
-
-        self.classifier = nn.Sequential(
-
-            nn.Linear(
-                hidden_channels,
-                hidden_channels
-            ),
-
-            nn.ReLU(),
-
-            nn.Dropout(
-                0.3
-            ),
-
-            nn.Linear(
-                hidden_channels,
-                num_classes
-            )
-        )
-
-    def forward(self, x):
-
-        # x:
-        # [batch, features]
-
-        x = x.unsqueeze(1)
-
-        # [batch, 1, features]
-
-        x = self.input_layer(x)
-
-        x = self.input_bn(x)
-
-        x = F.relu(x)
-
-        # Encoder
-        x = self.encoder1(x)
-
-        x = self.encoder2(x)
-
-        # Decoder
-        x = self.decoder1(x)
-
-        x = self.decoder2(x)
-
-        # Global pooling
-        x = self.pool(x)
-
-        # [batch, channels, 1]
-        x = x.squeeze(-1)
-
-        # Classification
-        logits = self.classifier(x)
-
-        return logits
-
-
-# ============================================================
-# BI-LSTM
-# ============================================================
-
-class BiLSTMModel(nn.Module):
-    """
-    Bidirectional LSTM for sequential representation
-    of software metric features.
-    """
-
-    def __init__(
-        self,
-        num_features,
-        hidden_size=64,
-        num_layers=2,
-        num_classes=2
-    ):
-        super().__init__()
-
-        self.num_features = num_features
-
-        self.lstm = nn.LSTM(
-
-            input_size=1,
-
-            hidden_size=hidden_size,
-
-            num_layers=num_layers,
-
-            batch_first=True,
-
-            bidirectional=True,
-
-            dropout=0.3
-            if num_layers > 1
-            else 0.0
-        )
-
-        self.classifier = nn.Sequential(
-
-            nn.Linear(
-                hidden_size * 2,
-                hidden_size
-            ),
-
-            nn.ReLU(),
-
-            nn.Dropout(
-                0.3
-            ),
-
-            nn.Linear(
-                hidden_size,
-                num_classes
-            )
-        )
-
-    def forward(self, x):
-
-        # x:
-        # [batch, features]
-
-        # Convert every feature into a
-        # one-dimensional sequence element.
-
-        x = x.unsqueeze(-1)
-
-        # [batch, features, 1]
-
-        output, _ = self.lstm(x)
-
-        # Use the final sequence representation
-
-        x = output[:, -1, :]
-
-        logits = self.classifier(x)
-
-        return logits
-
-
-# ============================================================
-# HYBRID MODEL
-# ============================================================
-
-class HybridDefectModel(nn.Module):
-    """
-    Hybrid model:
-
-        Improved LinkNet
-              +
-            Bi-LSTM
-              ↓
-        Score-Level Fusion
-              ↓
-            Softmax
-    """
-
-    def __init__(
-        self,
-        num_features,
-        linknet_weight=0.5,
-        bilstm_weight=0.5
-    ):
-        super().__init__()
-
-        self.num_features = num_features
-
-        self.linknet_weight = linknet_weight
-
-        self.bilstm_weight = bilstm_weight
-
-        self.linknet = ImprovedLinkNet(
-            num_features=num_features
-        )
-
-        self.bilstm = BiLSTMModel(
-            num_features=num_features
-        )
-
-    def forward(self, x):
-
-        # ----------------------------------------------------
-        # LinkNet
-        # ----------------------------------------------------
-
-        linknet_logits = self.linknet(x)
-
-        # ----------------------------------------------------
-        # Bi-LSTM
-        # ----------------------------------------------------
-
-        bilstm_logits = self.bilstm(x)
-
-        # ----------------------------------------------------
-        # Convert each branch into probabilities
-        # ----------------------------------------------------
-
-        linknet_probability = F.softmax(
-            linknet_logits,
-            dim=1
-        )
-
-        bilstm_probability = F.softmax(
-            bilstm_logits,
-            dim=1
-        )
-
-        # ----------------------------------------------------
-        # Score-Level Fusion
-        # ----------------------------------------------------
-
-        fused_probability = (
-
-            self.linknet_weight
-            * linknet_probability
-
-            +
-
-            self.bilstm_weight
-            * bilstm_probability
-        )
-
-        # Normalize the fused scores
-        fused_probability = (
-            fused_probability
-            /
-            fused_probability.sum(
-                dim=1,
-                keepdim=True
-            )
-        )
-
-        # Convert fused probabilities to logits
-        # for compatibility with loss functions.
-
-        fused_logits = torch.log(
-            fused_probability.clamp(
-                min=1e-8
-            )
-        )
-
-        return {
-
-            "linknet_logits":
-                linknet_logits,
-
-            "bilstm_logits":
-                bilstm_logits,
-
-            "linknet_probabilities":
-                linknet_probability,
-
-            "bilstm_probabilities":
-                bilstm_probability,
-
-            "fused_logits":
-                fused_logits,
-
-            "fused_probability":
-                fused_probability
-        }
-
-    def predict(self, x):
-
-        self.eval()
-
+            self.act = nn.ReLU()
+
+    def forward_one(self, x):
+        h = self.fc1(x)
+        if h.size(0) > 1:
+            h = self.bn1(h)
+        h = self.act(h)
+        h = self.dropout(h)
+        
+        h = self.fc2(h)
+        if h.size(0) > 1:
+            h = self.bn2(h)
+        h = F.normalize(h, p=2, dim=1)
+        return h
+
+    def forward(self, x1, x2):
+        out1 = self.forward_one(x1)
+        out2 = self.forward_one(x2)
+        return out1, out2
+
+
+class ContrastiveLoss(nn.Module):
+    def __init__(self, margin=1.0):
+        super(ContrastiveLoss, self).__init__()
+        self.margin = margin
+
+    def forward(self, out1, out2, label):
+        euclidean_distance = F.pairwise_distance(out1, out2, p=2)
+        loss_similar = (1.0 - label) * 0.5 * torch.pow(euclidean_distance, 2)
+        loss_dissimilar = label * 0.5 * torch.pow(torch.clamp(self.margin - euclidean_distance, min=0.0), 2)
+        return torch.mean(loss_similar + loss_dissimilar)
+
+
+class CSDLClassifier:
+    def __init__(self, feature_mask=None, embedding_dim=64, lr=0.001, margin=1.0, activation="relu", optimizer_type="adam", epochs=25, batch_size=32, device=None):
+        self.feature_mask = feature_mask
+        self.embedding_dim = embedding_dim
+        self.lr = lr
+        self.margin = margin
+        self.activation = activation
+        self.optimizer_type = optimizer_type
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        
+        self.model = None
+        self.clean_prototype = None
+        self.defect_prototype = None
+        self.threshold = 0.5
+
+    def _apply_mask(self, X):
+        if self.feature_mask is not None:
+            mask = np.array(self.feature_mask, dtype=bool)
+            if mask.ndim == 1 and len(mask) == X.shape[1]:
+                return X[:, mask]
+        return X
+
+    def fit(self, X_train, y_train, pair_generator_fn, val_data=None):
+        X_masked = self._apply_mask(X_train)
+        in_features = X_masked.shape[1]
+        
+        self.model = SiameseTwinNetwork(
+            in_features=in_features,
+            embedding_dim=self.embedding_dim,
+            activation=self.activation
+        ).to(self.device)
+        
+        criterion = ContrastiveLoss(margin=self.margin)
+        
+        if str(self.optimizer_type).lower() == "rmsprop":
+            optimizer = torch.optim.RMSprop(self.model.parameters(), lr=self.lr, weight_decay=1e-4)
+        else:
+            optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=1e-4)
+            
+        x1_arr, x2_arr, labels_arr = pair_generator_fn(X_masked, y_train)
+        n_pairs = len(labels_arr)
+        
+        # Pre-convert to tensors
+        t_x1 = torch.tensor(x1_arr, dtype=torch.float32).to(self.device)
+        t_x2 = torch.tensor(x2_arr, dtype=torch.float32).to(self.device)
+        t_y = torch.tensor(labels_arr, dtype=torch.float32).to(self.device)
+        
+        self.model.train()
+        for epoch in range(self.epochs):
+            indices = torch.randperm(n_pairs)
+            for start_idx in range(0, n_pairs, self.batch_size):
+                batch_idx = indices[start_idx : start_idx + self.batch_size]
+                b_x1 = t_x1[batch_idx]
+                b_x2 = t_x2[batch_idx]
+                b_y = t_y[batch_idx]
+                
+                optimizer.zero_grad()
+                out1, out2 = self.model(b_x1, b_x2)
+                loss = criterion(out1, out2, b_y)
+                loss.backward()
+                optimizer.step()
+
+        # Compute class prototype centroids in embedding space
+        self.model.eval()
         with torch.no_grad():
+            X_tensor = torch.tensor(X_masked, dtype=torch.float32).to(self.device)
+            embeddings = self.model.forward_one(X_tensor).cpu().numpy()
+            
+            clean_embeds = embeddings[y_train == 0]
+            defect_embeds = embeddings[y_train == 1]
+            
+            self.clean_prototype = np.mean(clean_embeds, axis=0, keepdims=True)
+            self.defect_prototype = np.mean(defect_embeds, axis=0, keepdims=True)
+            
+            self.clean_prototype /= np.linalg.norm(self.clean_prototype)
+            self.defect_prototype /= np.linalg.norm(self.defect_prototype)
 
-            outputs = self.forward(x)
+        return self
 
-            probabilities = (
-                outputs[
-                    "fused_probability"
-                ]
-            )
+    def get_embeddings(self, X):
+        X_masked = self._apply_mask(X)
+        self.model.eval()
+        with torch.no_grad():
+            X_tensor = torch.tensor(X_masked, dtype=torch.float32).to(self.device)
+            embeds = self.model.forward_one(X_tensor).cpu().numpy()
+        return embeds
 
-            prediction = torch.argmax(
-                probabilities,
-                dim=1
-            )
+    def predict_proba(self, X):
+        embeds = self.get_embeddings(X)
+        d_clean = np.linalg.norm(embeds - self.clean_prototype, axis=1)
+        d_defect = np.linalg.norm(embeds - self.defect_prototype, axis=1)
+        
+        temperature = 1.0
+        scores = np.stack([-d_clean / temperature, -d_defect / temperature], axis=1)
+        exp_scores = np.exp(scores - np.max(scores, axis=1, keepdims=True))
+        probs = exp_scores / np.sum(exp_scores, axis=1, keepdims=True)
+        return probs
 
-            confidence = torch.max(
-                probabilities,
-                dim=1
-            ).values
-
-        return {
-
-            **outputs,
-
-            "probabilities":
-                probabilities,
-
-            "prediction":
-                prediction,
-
-            "confidence":
-                confidence
-        }
+    def predict(self, X):
+        probs = self.predict_proba(X)
+        return (probs[:, 1] >= self.threshold).astype(int)
